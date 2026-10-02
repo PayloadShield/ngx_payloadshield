@@ -1,0 +1,15 @@
+ngx_module_type=HTTP_FILTER
+ngx_module_name=ngx_http_payloadshield_module
+
+ngx_module_srcs="$ngx_addon_dir/src/ngx_http_payloadshield_module.c $ngx_addon_dir/src/ngx_http_payloadshield_request.c $ngx_addon_dir/src/ngx_http_payloadshield_response.c $ngx_addon_dir/src/payloadshield_envelope.c"
+
+for ngx_payloadshield_crypto_src in "$ngx_addon_dir"/crypto/*.c; do
+    ngx_module_srcs="$ngx_module_srcs $ngx_payloadshield_crypto_src"
+done
+
+ngx_module_deps="$ngx_addon_dir/include/payloadshield_crypto.h $ngx_addon_dir/include/payloadshield_envelope.h $ngx_addon_dir/include/payloadshield_module.h $ngx_addon_dir/crypto/aead_provider.h"
+
+ngx_module_libs="-lcrypto"
+ngx_module_incs="$ngx_addon_dir/include $ngx_addon_dir/crypto"
+
+. auto/module
