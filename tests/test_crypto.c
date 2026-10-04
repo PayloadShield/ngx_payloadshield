@@ -95,7 +95,8 @@ test_symmetric_provider(const char *name)
 
     result = payloadshield_crypto_decrypt(name, &config, encrypted.data,
                                           encrypted.len - 1, &rejected);
-    CHECK(result == PAYLOADSHIELD_CRYPTO_INVALID,
+    CHECK(result == PAYLOADSHIELD_CRYPTO_AUTH
+          && rejected.data == NULL,
           "truncated symmetric payload rejected");
     payloadshield_buffer_free(&rejected);
 
