@@ -177,7 +177,6 @@ static void
 ngx_http_payloadshield_body_ready(ngx_http_request_t *r)
 {
     ngx_http_payloadshield_loc_conf_t *conf;
-    payloadshield_buffer_t input = { NULL, 0 };
     payloadshield_buffer_t encoded = { NULL, 0 };
     payloadshield_buffer_t plaintext = { NULL, 0 };
     u_char *body = NULL;
