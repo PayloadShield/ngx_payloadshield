@@ -7,6 +7,7 @@
 
 #include <openssl/crypto.h>
 #include <openssl/rsa.h>
+#include <openssl/rand.h>
 
 #define PAYLOADSHIELD_NONCE_SIZE 12
 #define PAYLOADSHIELD_TAG_SIZE 16
