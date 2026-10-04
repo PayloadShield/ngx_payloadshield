@@ -204,6 +204,13 @@ ngx_http_payloadshield_body_ready(ngx_http_request_t *r)
     }
 
     rc = payloadshield_envelope_unwrap(body, body_length, &encoded);
+    if (rc == PAYLOADSHIELD_CRYPTO_OK
+        && ngx_strcmp(conf->algorithm.data, "rsa-hybrid") != 0)
+    {
+        payloadshield_buffer_t text = encoded;
+        rc = payloadshield_base64_decode_buffer(text.data, text.len, &encoded);
+        payloadshield_buffer_free(&text);
+    }
     if (rc == PAYLOADSHIELD_CRYPTO_OK) {
         crypto_rc = payloadshield_crypto_decrypt(
             (char *) conf->algorithm.data, &conf->crypto,

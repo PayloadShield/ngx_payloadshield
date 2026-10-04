@@ -3,7 +3,68 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <limits.h>
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
+
+int
+payloadshield_base64_encode_buffer(const unsigned char *input,
+    size_t input_len, payloadshield_buffer_t *output)
+{
+    size_t capacity;
+    unsigned char *result;
+
+    if (output == NULL || (input == NULL && input_len != 0)
+        || input_len > (size_t) INT_MAX / 4 * 3)
+    {
+        return PAYLOADSHIELD_CRYPTO_INVALID;
+    }
+    output->data = NULL;
+    output->len = 0;
+    capacity = 4 * ((input_len + 2) / 3);
+    result = OPENSSL_malloc(capacity + 1);
+    if (result == NULL) {
+        return PAYLOADSHIELD_CRYPTO_NOMEM;
+    }
+    if (EVP_EncodeBlock(result, input, (int) input_len) != (int) capacity) {
+        OPENSSL_free(result);
+        return PAYLOADSHIELD_CRYPTO_FAILURE;
+    }
+    output->data = result;
+    output->len = capacity;
+    return PAYLOADSHIELD_CRYPTO_OK;
+}
+
+int
+payloadshield_base64_decode_buffer(const unsigned char *input,
+    size_t input_len, payloadshield_buffer_t *output)
+{
+    size_t padding = 0;
+    int written;
+    unsigned char *result;
+
+    if (output == NULL || input == NULL || input_len == 0
+        || input_len % 4 != 0 || input_len > INT_MAX)
+    {
+        return PAYLOADSHIELD_CRYPTO_INVALID;
+    }
+    output->data = NULL;
+    output->len = 0;
+    if (input[input_len - 1] == '=') padding++;
+    if (input[input_len - 2] == '=') padding++;
+    result = OPENSSL_malloc(input_len / 4 * 3);
+    if (result == NULL) {
+        return PAYLOADSHIELD_CRYPTO_NOMEM;
+    }
+    written = EVP_DecodeBlock(result, input, (int) input_len);
+    if (written < 0 || (size_t) written < padding) {
+        OPENSSL_free(result);
+        return PAYLOADSHIELD_CRYPTO_INVALID;
+    }
+    output->data = result;
+    output->len = (size_t) written - padding;
+    return PAYLOADSHIELD_CRYPTO_OK;
+}
 
 static void
 payloadshield_envelope_skip_space(const unsigned char **cursor,
