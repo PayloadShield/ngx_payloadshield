@@ -125,6 +125,38 @@ done:
 }
 
 static void
+test_wire_interop(void)
+{
+    static const char wire[] = "{\"encrypted\":\"AAAAAAAAAAAAAAAAzqdAPU1ga24HTsXTuvOdGNDRyKeZmWvwJluYtdSKuRk=\"}";
+    unsigned char key[32] = { 0 };
+    payloadshield_crypto_config_t config = { 0 };
+    payloadshield_buffer_t text = { 0 };
+    payloadshield_buffer_t raw = { 0 };
+    payloadshield_buffer_t plain = { 0 };
+    unsigned char zeros[16] = { 0 };
+    int result;
+
+    config.key = key;
+    config.key_len = sizeof(key);
+    config.max_payload_size = 1024;
+    result = payloadshield_envelope_unwrap((const unsigned char *) wire,
+                                           sizeof(wire) - 1, &text);
+    if (result == PAYLOADSHIELD_CRYPTO_OK) {
+        result = payloadshield_base64_decode_buffer(text.data, text.len, &raw);
+    }
+    if (result == PAYLOADSHIELD_CRYPTO_OK) {
+        result = payloadshield_crypto_decrypt("aes-gcm-256", &config,
+                                              raw.data, raw.len, &plain);
+    }
+    CHECK(result == PAYLOADSHIELD_CRYPTO_OK && plain.len == sizeof(zeros)
+          && memcmp(plain.data, zeros, sizeof(zeros)) == 0,
+          "fixed Base64 envelope from reference vector decrypts");
+    payloadshield_buffer_free(&text);
+    payloadshield_buffer_free(&raw);
+    payloadshield_buffer_free(&plain);
+}
+
+static void
 test_aes_gcm_known_vector(void)
 {
     static const unsigned char vector[] = {
@@ -302,6 +334,7 @@ main(void)
     test_symmetric_provider("aes-gcm-256");
     test_symmetric_provider("chacha20-poly1305");
     test_aes_gcm_known_vector();
+    test_wire_interop();
     test_provider_configuration_errors();
     test_rsa_hybrid();
     test_payload_envelope();
