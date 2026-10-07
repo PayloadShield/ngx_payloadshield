@@ -27,6 +27,7 @@ typedef struct {
     size_t response_len;
     size_t response_capacity;
     ngx_flag_t response_bypass;
+    ngx_flag_t request_processed;
 } ngx_http_payloadshield_ctx_t;
 
 extern ngx_module_t ngx_http_payloadshield_module;

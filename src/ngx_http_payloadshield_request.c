@@ -42,10 +42,15 @@ static ngx_int_t
 ngx_http_payloadshield_access_handler(ngx_http_request_t *r)
 {
     ngx_http_payloadshield_loc_conf_t *conf;
+    ngx_http_payloadshield_ctx_t *ctx;
     ngx_int_t rc;
 
     conf = ngx_http_get_module_loc_conf(r, ngx_http_payloadshield_module);
     if (!conf->enable) {
+        return NGX_DECLINED;
+    }
+    ctx = ngx_http_get_module_ctx(r, ngx_http_payloadshield_module);
+    if (ctx != NULL && ctx->request_processed) {
         return NGX_DECLINED;
     }
     if (r->headers_in.content_length_n <= 0
@@ -177,6 +182,7 @@ static void
 ngx_http_payloadshield_body_ready(ngx_http_request_t *r)
 {
     ngx_http_payloadshield_loc_conf_t *conf;
+    ngx_http_payloadshield_ctx_t *ctx;
     payloadshield_buffer_t encoded = { NULL, 0 };
     payloadshield_buffer_t plaintext = { NULL, 0 };
     u_char *body = NULL;
@@ -186,6 +192,22 @@ ngx_http_payloadshield_body_ready(ngx_http_request_t *r)
     int crypto_rc;
 
     conf = ngx_http_get_module_loc_conf(r, ngx_http_payloadshield_module);
+
+    /* Phases are re-run after this callback; mark the body as handled so the
+     * access handler does not unwrap the already-decrypted body again. */
+    ctx = ngx_http_get_module_ctx(r, ngx_http_payloadshield_module);
+    if (ctx == NULL) {
+        ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_payloadshield_ctx_t));
+        if (ctx == NULL) {
+            ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+            return;
+        }
+        ngx_http_set_ctx(r, ctx, ngx_http_payloadshield_module);
+    }
+    ctx->request_processed = 1;
+    /* The header filter installs a fresh context for responses it encrypts;
+     * if it skips (204, HEAD), this one must keep the body filter bypassed. */
+    ctx->response_bypass = 1;
     if (conf->max_body_size > (SIZE_MAX - 32768) / 2) {
         ngx_http_finalize_request(r, NGX_HTTP_REQUEST_ENTITY_TOO_LARGE);
         return;
@@ -207,6 +229,8 @@ ngx_http_payloadshield_body_ready(ngx_http_request_t *r)
         && ngx_strcmp(conf->algorithm.data, "rsa-hybrid") != 0)
     {
         payloadshield_buffer_t text = encoded;
+        encoded.data = NULL;
+        encoded.len = 0;
         rc = payloadshield_base64_decode_buffer(text.data, text.len, &encoded);
         payloadshield_buffer_free(&text);
     }

@@ -220,3 +220,7 @@ Troubleshooting:
 * 413 responses: check both `payloadshield_max_body_size` and Nginx `client_max_body_size`.
 * Content-encoding errors: disable upstream/Nginx compression on the protected location; encrypted bytes must not be gzip-compressed.
 * No response on a large/streamed route: whole-response buffering is required in this release; lower the response size or do not enable PayloadShield for that route.
+
+## Docker images per Nginx version
+
+The Nginx versions to build are listed in `docker/nginx-versions.json`. A single `docker/Dockerfile` compiles the module against each version in a multi-stage build; the final image has no compilers or `-dev` packages. The `test` stage runs the unit and integration tests during the build, and `docker/smoke_test.sh` checks `nginx -t`, module loading, and startup. Run `docker/build.sh` to build everything locally (override with `NGINX_VERSIONS="1.28.3"`). Images are not published.

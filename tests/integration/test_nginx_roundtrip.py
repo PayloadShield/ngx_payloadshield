@@ -171,6 +171,11 @@ http {{
         if hasattr(cls, "temp"):
             cls.temp.cleanup()
 
+    def setUp(self):
+        # Drop upstream requests left behind by earlier tests.
+        while not UPSTREAM_REQUESTS.empty():
+            UPSTREAM_REQUESTS.get_nowait()
+
     def test_nginx_t_rejects_unknown_algorithm_and_missing_key(self):
         nginx = os.environ.get("NGINX_BIN") or shutil.which("nginx")
         original = self.config.read_text(encoding="utf-8")

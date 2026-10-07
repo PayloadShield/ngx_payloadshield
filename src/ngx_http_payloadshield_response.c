@@ -153,6 +153,11 @@ ngx_http_payloadshield_append_response(ngx_http_request_t *r,
                 return NGX_ERROR;
             }
         }
+        if (ngx_buf_in_memory(buf)) {
+            buf->pos = buf->last;
+        } else if (buf->in_file) {
+            buf->file_pos = buf->file_last;
+        }
         ctx->response_len = needed;
     }
 
