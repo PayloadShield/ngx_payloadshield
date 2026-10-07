@@ -224,3 +224,46 @@ Troubleshooting:
 ## Docker images per Nginx version
 
 The Nginx versions to build are listed in `docker/nginx-versions.json`. A single `docker/Dockerfile` compiles the module against each version in a multi-stage build; the final image has no compilers or `-dev` packages. The `test` stage runs the unit and integration tests during the build, and `docker/smoke_test.sh` checks `nginx -t`, module loading, and startup. Run `docker/build.sh` to build everything locally (override with `NGINX_VERSIONS="1.28.3"`). Images are not published.
+
+
+### Docker installation
+
+Prerequisite: [Docker](https://docs.docker.com/get-docker/) installed and running.
+
+1. Pull the image for your Nginx version:
+
+   ```sh
+   docker pull kanduganesh/payloadshield-nginx:1.28.3
+   ```
+
+2. Run it (the container listens on port 8080 and runs as the non-root `nginx` user):
+
+   ```sh
+   docker run -d --name payloadshield -p 8080:8080 kanduganesh/payloadshield-nginx:1.28.3
+   ```
+
+3. Verify the configuration and that the module is loaded:
+
+   ```sh
+   docker exec payloadshield nginx -t
+   docker exec payloadshield nginx -V
+   curl http://localhost:8080/
+   ```
+
+4. Use your own configuration (it must keep the `load_module` line):
+
+   ```sh
+   docker run -d -p 8080:8080 \
+     -v ./nginx.conf:/etc/nginx/nginx.conf:ro \
+     kanduganesh/payloadshield-nginx:1.28.3
+   ```
+
+   ```nginx
+   load_module /usr/lib/nginx/modules/ngx_http_payloadshield_module.so;
+   ```
+
+5. Stop and remove:
+
+   ```sh
+   docker rm -f payloadshield
+   ```
