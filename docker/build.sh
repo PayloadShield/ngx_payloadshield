@@ -9,7 +9,7 @@ for v in $VERSIONS; do
   # The test stage runs the integration suite as part of the build.
   docker build -f docker/Dockerfile --build-arg NGINX_VERSION="$v" --target test -t "payloadshield-nginx:$v-test" .
   docker build -f docker/Dockerfile --build-arg NGINX_VERSION="$v" --target final -t "payloadshield-nginx:$v" .
-  module_file="dist/$v/ngx_http_payloadshield_module.so"
+  module_file="dist/ngx_http_payloadshield_module_$v.so"
   if [ ! -f "$module_file" ]; then
     mkdir -p "$(dirname "$module_file")"
     container_id=$(docker create "payloadshield-nginx:$v")
