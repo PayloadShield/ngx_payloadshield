@@ -1,6 +1,34 @@
 # ngx_payloadshield
 
-`ngx_payloadshield_module` is an Nginx HTTP dynamic-module prototype that decrypts the established PayloadShield request envelope before proxying and encrypts buffered upstream response bodies before returning them. Applications behind Nginx receive ordinary plaintext HTTP requests and return ordinary plaintext HTTP responses. The module is not production-certified; compile and integration-test it against the exact Nginx/OpenSSL builds and configuration used in deployment before handling real traffic.
+`ngx_payloadshield_module` is an Nginx HTTP dynamic module that decrypts the established PayloadShield request envelope before proxying and encrypts buffered upstream response bodies before returning them. Applications behind Nginx receive ordinary plaintext HTTP requests and return ordinary plaintext HTTP responses. Compile and integration-test it against the exact Nginx/OpenSSL builds and configuration used in deployment before handling real traffic.
+
+## Overview and use case
+
+PayloadShield is primarily designed for **service-to-service communication behind a reverse proxy**. A client service sends an encrypted `{"encrypted":"..."}` JSON envelope to Nginx. Nginx authenticates and decrypts the envelope, forwards ordinary plaintext HTTP to the application behind `proxy_pass`, and encrypts the complete upstream response again before it reaches the client.
+
+```text
+Order Service                         API Gateway/Nginx
+  |  POST /api/orders  (TLS + encrypted PayloadShield envelope)
+  | ------------------------------------------------------> |
+  |                         decrypt at Nginx               |
+  |                         proxy_pass                      |
+  |                                                   FastAPI / Node / PHP / Java / Go
+  |                         encrypted response             |
+  | <------------------------------------------------------ |
+```
+
+This is useful when application teams need application-layer payload protection in addition to TLS, when plaintext should remain off public-facing services and Nginx must act as the crypto boundary, or when existing upstream applications cannot be changed to add framework-specific PayloadShield integration.
+
+Advantages include:
+
+* Centralized request and response encryption for multiple upstream services.
+* Plaintext communication only between Nginx and trusted internal upstream applications.
+* Support for FastAPI/Uvicorn, Node.js/PM2, PHP/Laravel/PHP-FPM, Java, Go, .NET, and other HTTP upstreams.
+* AES-256-GCM, ChaCha20-Poly1305, and RSA-Hybrid encryption options.
+* No PayloadShield SDK or middleware requirement in the upstream application.
+* Consistent envelope format with other PayloadShield providers and cross-language integrations.
+
+This module is an application-layer gateway feature, not a replacement for HTTPS, authentication, authorization, replay protection, input validation, or network segmentation.
 
 ## Data flow
 
@@ -49,13 +77,118 @@ All configured key files and provider-specific key requirements are validated du
 
 RSA PEM files should be unencrypted PEM for this initial implementation: public key in SubjectPublicKeyInfo form (`BEGIN PUBLIC KEY`) and private key in a format readable by OpenSSL `PEM_read_bio_PrivateKey`. Use RSA keys of at least 2048 bits. Protect private and symmetric key files (for example, owner-readable only, `chmod 600`); public recipient keys may be world-readable. Rotate keys with coordinated client changes and a controlled Nginx configuration reload. There is no client identity/key resolver yet: RSA-Hybrid response encryption uses one static configured client public key for a location.
 
+### Symmetric key setup
+
+Generate a random 32-byte AES-GCM or ChaCha20-Poly1305 key:
+
+```sh
+openssl rand 32 > /etc/payloadshield/server.key
+chmod 600 /etc/payloadshield/server.key
+```
+
+The key file may contain the raw 32 bytes or standard Base64 text encoding exactly 32 bytes. The same symmetric key must be available to Nginx and the calling client. For long-lived deployments, store and distribute it through a secret manager and rotate it with a coordinated release.
+
+### AES-256-GCM configuration
+
+AES-256-GCM uses a 12-byte random nonce and 16-byte authentication tag per encrypted message. Use it when all communicating services can share a symmetric secret:
+
+```nginx
+location /api/ {
+    gzip off;
+    payloadshield on;
+    payloadshield_algorithm aes-gcm-256;
+    payloadshield_key /etc/payloadshield/server.key;
+    payloadshield_max_body_size 10m;
+    payloadshield_buffer_response on;
+    proxy_pass http://fastapi_backend;
+}
+```
+
+### ChaCha20-Poly1305 configuration
+
+ChaCha20-Poly1305 provides authenticated encryption with the same 32-byte key and envelope conventions as AES-GCM:
+
+```nginx
+location /api/ {
+    gzip off;
+    payloadshield on;
+    payloadshield_algorithm chacha20-poly1305;
+    payloadshield_key /etc/payloadshield/server.key;
+    payloadshield_max_body_size 10m;
+    payloadshield_buffer_response on;
+    proxy_pass http://fastapi_backend;
+}
+```
+
+Choose an algorithm explicitly in both Nginx and clients. Do not switch algorithms without coordinated key and client updates.
+
+### RSA-Hybrid configuration
+
+RSA-Hybrid uses RSA-OAEP-SHA256 to wrap a random AES-256-GCM content key. The request private key belongs to Nginx, while the response public key belongs to the client/recipient:
+
+```sh
+openssl genrsa -out server-private.pem 2048
+openssl rsa -in server-private.pem -pubout -out server-public.pem
+openssl genrsa -out client-recipient-private.pem 2048
+openssl rsa -in client-recipient-private.pem -pubout -out client-recipient-public.pem
+chmod 600 server-private.pem client-recipient-private.pem
+```
+
+```nginx
+location /api/ {
+    gzip off;
+    payloadshield on;
+    payloadshield_algorithm rsa-hybrid;
+    payloadshield_private_key /etc/payloadshield/server-private.pem;
+    payloadshield_public_key /etc/payloadshield/client-recipient-public.pem;
+    payloadshield_max_body_size 10m;
+    payloadshield_buffer_response on;
+    proxy_pass http://fastapi_backend;
+}
+```
+
+Give clients `server-public.pem` to encrypt requests and `client-recipient-private.pem` to decrypt responses. Keep `server-private.pem` on the Nginx host and never return or expose private keys. RSA-Hybrid currently uses one static response recipient public key per location, so it is best for a deployment in which a location has one known client recipient.
+
 ## Nginx configuration
 
-The module must be compiled against a compatible Nginx build. Start by recording the installed build options and version:
+### Pre-built module
+
+Pre-built Linux modules are available from the [GitHub Releases page](https://github.com/PayloadShield/ngx_payloadshield/releases). Download the module for the exact Nginx version reported by `nginx -V`; files built for a different Nginx version or vendor build are not interchangeable.
+
+The current release module can be downloaded directly:
+
+```sh
+curl -fL \
+  https://github.com/PayloadShield/ngx_payloadshield/releases/latest/download/ngx_http_payloadshield_module_1.30.7.so \
+  -o /tmp/ngx_http_payloadshield_module.so
+sudo install -D -m 0644 /tmp/ngx_http_payloadshield_module.so \
+  /usr/lib/nginx/modules/ngx_http_payloadshield_module.so
+```
+
+For another supported version, download the matching asset from the release or from the repository [dist folder](https://github.com/PayloadShield/ngx_payloadshield/tree/main/dist):
+
+| Nginx | Direct release download |
+|---|---|
+| 1.24.0 | [ngx_http_payloadshield_module_1.24.0.so](https://github.com/PayloadShield/ngx_payloadshield/releases/latest/download/ngx_http_payloadshield_module_1.24.0.so) |
+| 1.26.3 | [ngx_http_payloadshield_module_1.26.3.so](https://github.com/PayloadShield/ngx_payloadshield/releases/latest/download/ngx_http_payloadshield_module_1.26.3.so) |
+| 1.27.5 | [ngx_http_payloadshield_module_1.27.5.so](https://github.com/PayloadShield/ngx_payloadshield/releases/latest/download/ngx_http_payloadshield_module_1.27.5.so) |
+| 1.28.3 | [ngx_http_payloadshield_module_1.28.3.so](https://github.com/PayloadShield/ngx_payloadshield/releases/latest/download/ngx_http_payloadshield_module_1.28.3.so) |
+| 1.30.5 | [ngx_http_payloadshield_module_1.30.5.so](https://github.com/PayloadShield/ngx_payloadshield/releases/latest/download/ngx_http_payloadshield_module_1.30.5.so) |
+| 1.30.6 | [ngx_http_payloadshield_module_1.30.6.so](https://github.com/PayloadShield/ngx_payloadshield/releases/latest/download/ngx_http_payloadshield_module_1.30.6.so) |
+| 1.30.7 | [ngx_http_payloadshield_module_1.30.7.so](https://github.com/PayloadShield/ngx_payloadshield/releases/latest/download/ngx_http_payloadshield_module_1.30.7.so) |
+
+Before deployment, record the installed build options and verify the module ABI:
 
 ```sh
 nginx -V 2>&1
+nginx -t
 ```
+
+The pre-built module still requires the matching Nginx build, compatible OpenSSL, and compatible package/vendor patches. If `nginx -V` or `nginx -t` reports ABI or `dlopen()` errors, build the module instead.
+
+### Building the module
+
+The module must be compiled against a compatible Nginx build.
 
 Obtain the matching Nginx source release from the official Nginx source distribution (or the package source corresponding to your vendor build). Use the same relevant `./configure` options shown by `nginx -V`. `--with-compat` enables Nginx's dynamic-module compatibility support; it does not make a module compatible with every Nginx version or vendor patch set.
 
@@ -210,7 +343,7 @@ PAYLOADSHIELD_MODULE=/usr/lib/nginx/modules/ngx_http_payloadshield_module.so \
 python3 -m unittest discover -s tests/integration -v
 ```
 
-It verifies plaintext at the upstream, encrypted responses at the client, chunked requests, large request/response bodies, 200/201/400/401/404/500 statuses, empty responses, malformed request rejection, HEAD, 204, and `nginx -t` rejection of unknown algorithms, missing key files, and malformed RSA PEM. Fixed cross-language deterministic vectors for every provider are not yet included. Do not treat a successful module compilation or unit test as production readiness; run this suite against the exact target Nginx and inspect memory/header behavior before deployment.
+It verifies plaintext at the upstream, encrypted responses at the client, chunked requests, large request/response bodies, 200/201/400/401/404/500 statuses, empty responses, malformed request rejection, HEAD, 204, and `nginx -t` rejection of unknown algorithms, missing key files, and malformed RSA PEM. Fixed cross-language deterministic vectors for every provider are not yet included. Run this suite against the exact target Nginx and inspect memory/header behavior before deployment.
 
 Troubleshooting:
 
@@ -262,3 +395,11 @@ Prerequisite: [Docker](https://docs.docker.com/get-docker/) installed and runnin
    ```sh
    docker rm -f payloadshield
    ```
+
+## Maintainer
+
+PayloadShield is maintained by **Ganesh Kandu**.
+
+* Email: [kanduganesh@gmail.com](mailto:kanduganesh@gmail.com)
+* GitHub: [github.com/kanduganesh](https://github.com/kanduganesh)
+* Project: [github.com/PayloadShield/ngx_payloadshield](https://github.com/PayloadShield/ngx_payloadshield)
